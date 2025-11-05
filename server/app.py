@@ -31,6 +31,7 @@ socketio = SocketIO(app,
 # Variables globales
 capture_requested = False
 streaming_clients = set()
+esp32_ip = None  # IP del ESP32-CAM (detectada automáticamente)
 
 def allowed_file(filename):
     """Verifica si el archivo tiene una extensión permitida"""
@@ -99,6 +100,12 @@ def api_capture():
 @app.route('/api/upload', methods=['POST'])
 def api_upload():
     """ESP32 envía imagen capturada"""
+    global esp32_ip
+    
+    # Detectar IP del ESP32
+    if esp32_ip is None and request.remote_addr:
+        esp32_ip = request.remote_addr
+        print(f'IP del ESP32-CAM detectada: {esp32_ip}')
     
     if 'image' not in request.files:
         return jsonify({
@@ -147,6 +154,7 @@ def api_stream_frame():
     """ESP32 envía frame para streaming"""
     
     if 'image' not in request.files:
+        print('[stream-frame] ERROR: No se encontró el campo image')
         return jsonify({
             'status': 'error',
             'message': 'No se encontró el campo image'
@@ -158,6 +166,8 @@ def api_stream_frame():
         # Leer imagen y convertir a base64
         image_data = file.read()
         image_base64 = base64.b64encode(image_data).decode('utf-8')
+        
+        print(f'[stream-frame] Frame recibido: {len(image_data)} bytes, emitiendo a {len(streaming_clients)} clientes')
         
         # Emitir frame a todos los clientes conectados al streaming
         socketio.emit('stream_frame', {
@@ -222,6 +232,23 @@ def api_latest_image():
         'message': 'No hay imágenes disponibles'
     }), 404
 
+@app.route('/api/esp32-ip', methods=['GET'])
+def api_esp32_ip():
+    """Obtiene la IP del ESP32-CAM"""
+    global esp32_ip
+    
+    if esp32_ip:
+        return jsonify({
+            'ip': esp32_ip,
+            'status': 'detected'
+        }), 200
+    else:
+        return jsonify({
+            'ip': None,
+            'status': 'not_detected',
+            'message': 'IP del ESP32 no detectada aún. Espera a que el ESP32 envíe una imagen.'
+        }), 404
+
 @app.route('/api/streaming-status', methods=['GET', 'POST'])
 def api_streaming_status():
     """
@@ -233,6 +260,8 @@ def api_streaming_status():
     if request.method == 'POST':
         data = request.get_json()
         active = data.get('active', False)
+        
+        print(f'[POST streaming-status] Active: {active}')
         
         socketio.emit('streaming_status', {
             'active': active,
@@ -246,8 +275,11 @@ def api_streaming_status():
     
     else:  # GET
         # ESP32 consulta si hay clientes de streaming activos
+        has_clients = len(streaming_clients) > 0
+        print(f'[GET streaming-status] Clientes activos: {len(streaming_clients)}, Respuesta: {has_clients}')
+        
         return jsonify({
-            'streaming': len(streaming_clients) > 0
+            'streaming': has_clients
         }), 200
 
 # ============================================================================

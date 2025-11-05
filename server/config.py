@@ -34,3 +34,6 @@ SOCKETIO_CORS_ALLOWED_ORIGINS = '*'
 CAPTURE_REQUESTED = False
 STREAMING_ACTIVE = False
 
+# IP del ESP32-CAM (detectada automáticamente o configurada manualmente)
+ESP32_IP = None  # Se detectará automáticamente cuando el ESP32 envíe la primera imagen
+

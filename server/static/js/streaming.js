@@ -5,12 +5,15 @@
 
 // Variables globales para streaming
 let streamingActive = false;
-let canvas = null;
-let ctx = null;
+let streamImg = null;
 let frameCount = 0;
 let lastFrameTime = 0;
 let fps = 0;
-let latency = 0;
+let fpsInterval = null;
+
+// IP del ESP32-CAM (se obtiene automáticamente del servidor)
+let ESP32_IP = '192.168.0.100'; // IP por defecto, se actualizará automáticamente
+const ESP32_STREAM_PORT = 81;
 
 // ============================================================================
 // INICIALIZACIÓN
@@ -19,33 +22,65 @@ let latency = 0;
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Módulo de Streaming inicializado');
     
-    // Inicializar canvas
-    initCanvas();
+    // Inicializar imagen de streaming
+    initStreamImage();
     
     // Configurar event listeners
     setupStreamingEventListeners();
     
-    // Configurar listeners de Socket.IO para streaming
-    setupStreamingSocketListeners();
+    // Solicitar IP del ESP32 al servidor
+    fetchESP32IP();
 });
 
 // ============================================================================
-// CANVAS
+// IMAGEN DE STREAMING
 // ============================================================================
 
-function initCanvas() {
-    canvas = document.getElementById('streamCanvas');
+function initStreamImage() {
+    streamImg = document.getElementById('streamCanvas');
     
-    if (canvas) {
-        ctx = canvas.getContext('2d');
+    if (streamImg) {
+        // Convertir canvas a img si es necesario
+        if (streamImg.tagName === 'CANVAS') {
+            const parent = streamImg.parentNode;
+            const newImg = document.createElement('img');
+            newImg.id = 'streamCanvas';
+            newImg.className = streamImg.className;
+            newImg.style.width = '100%';
+            newImg.style.height = 'auto';
+            newImg.style.display = 'none';
+            parent.replaceChild(newImg, streamImg);
+            streamImg = newImg;
+        }
         
-        // Configurar tamaño inicial del canvas
-        canvas.width = 640;
-        canvas.height = 480;
+        // Agregar event listener para contar frames
+        streamImg.addEventListener('load', function() {
+            frameCount++;
+        });
         
-        // Ocultar canvas inicialmente
-        canvas.style.display = 'none';
+        // Error handler
+        streamImg.addEventListener('error', function() {
+            console.error('Error al cargar stream');
+            if (streamingActive) {
+                updateStreamingStatus('danger', 'Error al conectar con el stream del ESP32');
+            }
+        });
     }
+}
+
+function fetchESP32IP() {
+    // Intentar obtener la IP del ESP32 desde el servidor
+    fetch('/api/esp32-ip')
+        .then(response => response.json())
+        .then(data => {
+            if (data.ip) {
+                ESP32_IP = data.ip;
+                console.log('IP del ESP32 obtenida:', ESP32_IP);
+            }
+        })
+        .catch(error => {
+            console.log('No se pudo obtener IP del ESP32, usando IP por defecto');
+        });
 }
 
 // ============================================================================
@@ -67,44 +102,26 @@ function setupStreamingEventListeners() {
 }
 
 // ============================================================================
-// SOCKET.IO LISTENERS PARA STREAMING
+// CÁLCULO DE FPS
 // ============================================================================
 
-function setupStreamingSocketListeners() {
-    // Recibir frame de streaming
-    socket.on('stream_frame', function(data) {
-        if (!streamingActive) return;
-        
-        // Calcular FPS y latencia
-        const now = Date.now();
-        
-        if (lastFrameTime > 0) {
-            const timeDiff = now - lastFrameTime;
-            fps = Math.round(1000 / timeDiff);
-        }
-        
-        lastFrameTime = now;
-        
-        // Calcular latencia aproximada
-        if (data.timestamp) {
-            const frameTime = new Date(data.timestamp).getTime();
-            latency = now - frameTime;
-        }
-        
-        // Incrementar contador de frames
-        frameCount++;
-        
-        // Actualizar métricas en UI
-        updateStreamingMetrics();
-        
-        // Mostrar frame en canvas
-        displayFrame(data.image);
-    });
+function startFPSCounter() {
+    frameCount = 0;
     
-    // Estado de streaming
-    socket.on('streaming_status', function(data) {
-        console.log('Estado de streaming:', data);
-    });
+    fpsInterval = setInterval(function() {
+        fps = frameCount;
+        frameCount = 0;
+        updateStreamingMetrics();
+    }, 1000);
+}
+
+function stopFPSCounter() {
+    if (fpsInterval) {
+        clearInterval(fpsInterval);
+        fpsInterval = null;
+    }
+    fps = 0;
+    frameCount = 0;
 }
 
 // ============================================================================
@@ -115,41 +132,32 @@ function startStreaming() {
     console.log('Iniciando streaming...');
     
     streamingActive = true;
-    frameCount = 0;
-    lastFrameTime = 0;
-    fps = 0;
-    latency = 0;
     
     // Actualizar UI
     document.getElementById('startStreamBtn').disabled = true;
     document.getElementById('stopStreamBtn').disabled = false;
     
-    updateStreamingStatus('success', 'Streaming activo - Esperando frames...');
+    updateStreamingStatus('success', `Conectando al streaming del ESP32...`);
     
-    // Mostrar canvas y ocultar placeholder
-    canvas.style.display = 'block';
-    document.getElementById('streamPlaceholder').style.display = 'none';
-    
-    // Notificar al servidor vía Socket.IO
-    socket.emit('start_streaming', {
-        timestamp: new Date().toISOString()
-    });
-    
-    // También notificar vía REST API
-    fetch('/api/streaming-status', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ active: true })
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Streaming iniciado:', data);
-    })
-    .catch(error => {
-        console.error('Error al iniciar streaming:', error);
-    });
+    // Mostrar imagen y ocultar placeholder
+    if (streamImg) {
+        streamImg.style.display = 'block';
+        document.getElementById('streamPlaceholder').style.display = 'none';
+        
+        // Construir URL del stream MJPEG
+        const streamUrl = `http://${ESP32_IP}:${ESP32_STREAM_PORT}/stream?t=${Date.now()}`;
+        console.log('Stream URL:', streamUrl);
+        
+        // Establecer la fuente del stream
+        streamImg.src = streamUrl;
+        
+        // Iniciar contador de FPS
+        startFPSCounter();
+        
+        updateStreamingStatus('success', `Streaming activo desde ${ESP32_IP}:${ESP32_STREAM_PORT}`);
+    } else {
+        updateStreamingStatus('danger', 'Error: Elemento de streaming no encontrado');
+    }
 }
 
 function stopStreaming() {
@@ -163,66 +171,20 @@ function stopStreaming() {
     
     updateStreamingStatus('secondary', 'Streaming detenido');
     
-    // Ocultar canvas y mostrar placeholder
-    canvas.style.display = 'none';
-    document.getElementById('streamPlaceholder').style.display = 'block';
-    
-    // Limpiar canvas
-    if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // Ocultar imagen y mostrar placeholder
+    if (streamImg) {
+        streamImg.style.display = 'none';
+        streamImg.src = ''; // Detener el stream
+        document.getElementById('streamPlaceholder').style.display = 'block';
     }
     
+    // Detener contador de FPS
+    stopFPSCounter();
+    
     // Reset métricas
-    frameCount = 0;
-    fps = 0;
-    latency = 0;
     updateStreamingMetrics();
-    
-    // Notificar al servidor vía Socket.IO
-    socket.emit('stop_streaming', {
-        timestamp: new Date().toISOString()
-    });
-    
-    // También notificar vía REST API
-    fetch('/api/streaming-status', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ active: false })
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Streaming detenido:', data);
-    })
-    .catch(error => {
-        console.error('Error al detener streaming:', error);
-    });
 }
 
-function displayFrame(base64Image) {
-    if (!ctx || !streamingActive) return;
-    
-    const img = new Image();
-    
-    img.onload = function() {
-        // Ajustar tamaño del canvas si es necesario
-        if (canvas.width !== img.width || canvas.height !== img.height) {
-            canvas.width = img.width;
-            canvas.height = img.height;
-        }
-        
-        // Dibujar imagen en canvas
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    };
-    
-    img.onerror = function() {
-        console.error('Error al cargar frame');
-    };
-    
-    // Cargar imagen desde base64
-    img.src = 'data:image/jpeg;base64,' + base64Image;
-}
 
 // ============================================================================
 // FUNCIONES DE UI
@@ -258,16 +220,18 @@ function updateStreamingMetrics() {
         fpsCounter.textContent = fps;
     }
     
-    // Actualizar latencia
+    // Actualizar latencia (N/A para MJPEG directo)
     const latencyCounter = document.getElementById('latencyCounter');
     if (latencyCounter) {
-        latencyCounter.textContent = latency + ' ms';
+        latencyCounter.textContent = streamingActive ? 'N/A' : '0';
     }
     
-    // Actualizar contador de frames
+    // Actualizar contador de frames (total acumulado)
     const frameCounter = document.getElementById('frameCounter');
     if (frameCounter) {
-        frameCounter.textContent = frameCount;
+        // Incrementar el total cada segundo basado en FPS
+        const currentTotal = parseInt(frameCounter.textContent) || 0;
+        frameCounter.textContent = currentTotal + fps;
     }
 }
 
@@ -275,16 +239,10 @@ function updateStreamingMetrics() {
 // MONITOREO
 // ============================================================================
 
-// Verificar si el streaming está activo y mostrar advertencia si no hay frames
+// Verificar conectividad con ESP32
 setInterval(function() {
-    if (streamingActive) {
-        const now = Date.now();
-        const timeSinceLastFrame = now - lastFrameTime;
-        
-        // Si han pasado más de 5 segundos sin frames
-        if (timeSinceLastFrame > 5000 && lastFrameTime > 0) {
-            updateStreamingStatus('warning', 'No se están recibiendo frames. Verificar ESP32-CAM.');
-        }
+    if (streamingActive && fps === 0) {
+        updateStreamingStatus('warning', 'No se reciben frames. Verifica que el ESP32 esté encendido y conectado.');
     }
-}, 2000);
+}, 5000);
 
