@@ -326,9 +326,8 @@ if __name__ == '__main__':
     print('Servidor iniciado. Presiona Ctrl+C para detener.')
     print('=' * 60)
     
-    socketio.run(app, 
-                host=config.HOST, 
-                port=config.PORT, 
-                debug=True,
-                allow_unsafe_werkzeug=True)
+    socketio.run(app,
+                 host=config.HOST,
+                 port=config.PORT,
+                 debug=True)
 

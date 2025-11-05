@@ -16,7 +16,7 @@
 #define WIFI_PASSWORD "Un*1234@"
 
 // Tiempo máximo de espera para conectar a WiFi (milisegundos)
-#define WIFI_TIMEOUT 20000
+#define WIFI_TIMEOUT 60000
 
 // ============================================================================
 // CONFIGURACIÓN DEL SERVIDOR FLASK
