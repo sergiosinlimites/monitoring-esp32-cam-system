@@ -106,7 +106,9 @@
 #define LED_FLASH_PIN 4
 
 // Usar flash al capturar foto
-#define USE_FLASH false
+// NOTA: Si las fotos salen oscuras, intenta con false
+// Si las fotos con flash salen negras, el delay puede ser demasiado corto
+#define USE_FLASH true
 
 #endif // CONFIG_H
 

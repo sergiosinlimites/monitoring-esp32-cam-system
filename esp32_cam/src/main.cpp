@@ -15,8 +15,10 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include "esp_camera.h"
+#include "esp_http_server.h"
 #include "config.h"
 #include "camera_pins.h"
+#include "streaming.h"
 
 // ============================================================================
 // VARIABLES GLOBALES
@@ -87,6 +89,14 @@ void setup() {
     DEBUG_PRINTLN("REINICIANDO EN 5 SEGUNDOS...");
     delay(5000);
     ESP.restart();
+  }
+  
+  // Iniciar servidor de streaming MJPEG
+  DEBUG_PRINTLN("\n[3/3] Iniciando servidor de streaming...");
+  if (startStreamServer(81)) {
+    DEBUG_PRINTLN("✓ Servidor de streaming disponible en puerto 81");
+  } else {
+    DEBUG_PRINTLN("✗ Error al iniciar servidor de streaming");
   }
   
   // Mostrar información
@@ -186,7 +196,7 @@ bool initCamera() {
   // Configuraciones adicionales del sensor
   sensor_t *s = esp_camera_sensor_get();
   if (s != NULL) {
-    // Ajustes opcionales
+    // Ajustes optimizados para captura con flash
     s->set_brightness(s, 0);     // -2 a 2
     s->set_contrast(s, 0);       // -2 a 2
     s->set_saturation(s, 0);     // -2 a 2
@@ -194,11 +204,13 @@ bool initCamera() {
     s->set_whitebal(s, 1);       // Balance de blancos automático
     s->set_awb_gain(s, 1);       // Ganancia AWB automática
     s->set_wb_mode(s, 0);        // Modo WB automático
-    s->set_exposure_ctrl(s, 1);  // Exposición automática
-    s->set_aec2(s, 0);           // AEC DSP
+    s->set_exposure_ctrl(s, 1);  // Exposición automática (importante para flash)
+    s->set_aec2(s, 1);           // AEC DSP activado para mejor exposición
+    s->set_ae_level(s, 0);       // Nivel de exposición (0 = normal)
+    s->set_aec_value(s, 300);    // Valor de exposición manual
     s->set_gain_ctrl(s, 1);      // Control de ganancia automático
     s->set_agc_gain(s, 0);       // Ganancia AGC
-    s->set_gainceiling(s, (gainceiling_t)0); // Techo de ganancia
+    s->set_gainceiling(s, (gainceiling_t)2); // Techo de ganancia más alto
     s->set_bpc(s, 0);            // BPC
     s->set_wpc(s, 1);            // WPC
     s->set_raw_gma(s, 1);        // Raw GMA
@@ -295,12 +307,14 @@ void checkStreamingStatus() {
   
   if (httpCode == 200) {
     String payload = http.getString();
+    DEBUG_PRINTLN("Respuesta streaming-status: " + payload);
     
     StaticJsonDocument<200> doc;
     DeserializationError error = deserializeJson(doc, payload);
     
     if (!error) {
       bool shouldStream = doc["streaming"] | false;
+      DEBUG_PRINTF("shouldStream: %d, streamingActive actual: %d\n", shouldStream, streamingActive);
       
       if (shouldStream != streamingActive) {
         streamingActive = shouldStream;
@@ -313,6 +327,7 @@ void checkStreamingStatus() {
           if (s != NULL) {
             s->set_framesize(s, FRAME_SIZE_STREAM);
             s->set_quality(s, JPEG_QUALITY_STREAM);
+            DEBUG_PRINTLN("Configuración de cámara cambiada para streaming");
           }
         } else {
           DEBUG_PRINTLN("\n>>> STREAMING DESACTIVADO <<<");
@@ -325,7 +340,11 @@ void checkStreamingStatus() {
           }
         }
       }
+    } else {
+      DEBUG_PRINTLN("Error al parsear JSON de streaming-status");
     }
+  } else {
+    DEBUG_PRINTF("Error HTTP en checkStreamingStatus: %d\n", httpCode);
   }
   
   http.end();
@@ -341,10 +360,18 @@ void captureAndSendPhoto() {
   // Encender flash si está habilitado
   if (USE_FLASH) {
     digitalWrite(LED_FLASH_PIN, HIGH);
-    delay(100);
+    delay(300); // Dar tiempo al flash para estabilizarse
+    
+    // Capturar frame dummy para que el sensor ajuste la exposición
+    camera_fb_t *fb_dummy = esp_camera_fb_get();
+    if (fb_dummy) {
+      esp_camera_fb_return(fb_dummy);
+    }
+    
+    delay(200); // Dar tiempo adicional para que el sensor se calibre
   }
   
-  // Capturar imagen
+  // Capturar imagen real
   camera_fb_t *fb = esp_camera_fb_get();
   
   // Apagar flash
@@ -390,9 +417,15 @@ void sendStreamFrame() {
     return;
   }
   
+  DEBUG_PRINTF("Enviando frame de streaming: %d bytes\n", fb->len);
+  
   // Enviar al servidor
   String url = String("http://") + SERVER_IP + ":" + String(SERVER_PORT) + "/api/stream-frame";
-  sendImageToServer(fb, url.c_str());
+  bool success = sendImageToServer(fb, url.c_str());
+  
+  if (!success) {
+    DEBUG_PRINTLN("Error al enviar frame de streaming");
+  }
   
   // Liberar buffer
   esp_camera_fb_return(fb);
@@ -464,7 +497,8 @@ void printStatus() {
   DEBUG_PRINTLN("Estado del sistema:");
   DEBUG_PRINTLN("  WiFi SSID: " + String(WIFI_SSID));
   DEBUG_PRINTLN("  IP Local: " + WiFi.localIP().toString());
-  DEBUG_PRINTLN("  Servidor: " + String(SERVER_IP) + ":" + String(SERVER_PORT));
+  DEBUG_PRINTLN("  Servidor Flask: " + String(SERVER_IP) + ":" + String(SERVER_PORT));
+  DEBUG_PRINTLN("  Streaming MJPEG: http://" + WiFi.localIP().toString() + ":81/stream");
   DEBUG_PRINTLN("  Resolución captura: " + String(FRAME_SIZE_CAPTURE));
   DEBUG_PRINTLN("  Resolución streaming: " + String(FRAME_SIZE_STREAM));
   DEBUG_PRINTLN("  Calidad JPEG captura: " + String(JPEG_QUALITY_CAPTURE));
