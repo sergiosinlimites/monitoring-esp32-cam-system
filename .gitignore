@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Flask
+instance/
+.webassets-cache
+
+# Imágenes capturadas
+server/static/images/*.jpg
+server/static/images/*.jpeg
+server/static/images/*.png
+
+# PlatformIO
+esp32_cam/.pio/
+esp32_cam/.vscode/
+esp32_cam/lib/
+esp32_cam/test/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+*.logs
+
+# Temporal
+*.tmp
+*.temp
+.cache/
+
+# Secrets (importante no subir)
+*secrets*
+*password*
+*.key
+*.pem
+
